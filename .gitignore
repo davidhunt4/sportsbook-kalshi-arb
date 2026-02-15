@@ -1,0 +1,9 @@
+*.pem
+.env
+__pycache__/
+venv/
+env/
+testing/
+package/
+lambda_deployment.zip
+output.json
