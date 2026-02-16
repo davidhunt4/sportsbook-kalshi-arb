@@ -6,7 +6,7 @@
 4. Executes buy orders on Kalshi for opportunities with >2.5% EV
 5. Sends trade notifications via AWS SNS (optional)
 
-Next step is to sell once Kalshi adjusts to the sportsbook-implied odds.
+Next step is to sell once Kalshi adjusts to the sportsbook-implied odds. Also to stop getting rate limited for the sportsbook API.
 
 ## Setup Instructions
 
