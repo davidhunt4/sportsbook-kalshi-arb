@@ -50,9 +50,9 @@ def get_time():
 private_key = load_private_key_from_file('demo_private_key.pem')
 
 method = "GET"
-base_url = "https://demo-api.kalshi.co"
-# base_url = 'https://api.elections.kalshi.com'
-path='/trade-api/v2/events?status=open&with_nested_markets=true'
+# base_url = "https://demo-api.kalshi.co"
+base_url = 'https://api.elections.kalshi.com'
+path='/trade-api/v2/events'
 
 # Strip query parameters from path before signing
 path_without_query = path.split('?')[0]
@@ -66,18 +66,24 @@ def get_kevents():
     cursor = None
     all_events = []
 
+    params = {
+        'status': 'open',
+        'with_nested_markets': 'true',
+        'series_ticker': 'KXNBAGAME'
+    }
+
     while True:
         headers = {
-            'KALSHI-ACCESS-KEY': os.getenv('KALSHI_DEMO_API_KEY'),
+            'KALSHI-ACCESS-KEY': os.getenv('KALSHI_PROD_API_KEY'),
             'KALSHI-ACCESS-SIGNATURE': sig,
             'KALSHI-ACCESS-TIMESTAMP': get_time(),
         }
 
         full_url = base_url + path
         if cursor:
-            full_url += f"&cursor={cursor}"
+            params['cursor'] = cursor
         
-        response = requests.get(full_url, headers=headers)
+        response = requests.get(full_url, headers=headers, params=params)
         data = response.json()
 
         all_events.extend(data['events'])
