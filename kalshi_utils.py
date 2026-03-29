@@ -63,36 +63,38 @@ sig = sign_pss_text(private_key, msg_string)
 ################################################
 
 def get_kevents():
-    cursor = None
     all_events = []
+    series_tickers = ['KXNBAGAME', 'KXMLBGAME', 'KXNHLGAME']
 
-    params = {
-        'status': 'open',
-        'with_nested_markets': 'true',
-        'series_ticker': 'KXNBAGAME'
-    }
-
-    while True:
-        headers = {
-            'KALSHI-ACCESS-KEY': os.getenv('KALSHI_PROD_API_KEY'),
-            'KALSHI-ACCESS-SIGNATURE': sig,
-            'KALSHI-ACCESS-TIMESTAMP': get_time(),
+    for ticker in series_tickers:
+        cursor = None
+        params = {
+            'status': 'open',
+            'with_nested_markets': 'true',
+            'series_ticker': ticker
         }
 
-        full_url = base_url + path
-        if cursor:
-            params['cursor'] = cursor
-        
-        response = requests.get(full_url, headers=headers, params=params)
-        data = response.json()
+        while True:
+            headers = {
+                'KALSHI-ACCESS-KEY': os.getenv('KALSHI_PROD_API_KEY'),
+                'KALSHI-ACCESS-SIGNATURE': sig,
+                'KALSHI-ACCESS-TIMESTAMP': get_time(),
+            }
 
-        all_events.extend(data['events'])
+            full_url = base_url + path
+            if cursor:
+                params['cursor'] = cursor
+            
+            response = requests.get(full_url, headers=headers, params=params)
+            data = response.json()
 
-        # print(response.text)
-        # events = data['events']
+            all_events.extend(data['events'])
 
-        cursor = data.get('cursor')
-        if not cursor:
-            break
+            # print(response.text)
+            # events = data['events']
+
+            cursor = data.get('cursor')
+            if not cursor:
+                break
     
     return all_events

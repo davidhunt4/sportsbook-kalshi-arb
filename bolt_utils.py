@@ -28,24 +28,106 @@ class BoltOddsManager:
         self.games: Dict[str, Dict[str, dict]] = {}
         
     async def connect(self):
-        """Establish websocket connection and subscribe to NBA games."""
+        """Establish websocket connection and subscribe to NBA, MLB, and NHL games."""
         self.websocket = await websockets.connect(self.uri, max_size=None)
         ack_message = await self.websocket.recv()
         print(f"Connected to Bolt: {ack_message}")
         
-        # Subscribe to NBA Moneyline markets
+        # Subscribe to NBA, MLB, and NHL Moneyline markets
         subscribe_message = {
             "action": "subscribe",
             "filters": {
-                "sports": ["NBA"],
+                "sports": ["NBA", "MLB", "NHL"],
                 "sportsbooks": self.sportsbooks,
                 "markets": ["Moneyline"]
             }
         }
         
         await self.websocket.send(json.dumps(subscribe_message))
-        print(f"Subscribed to NBA Moneyline for sportsbooks: {self.sportsbooks}")
+        print(f"Subscribed to NBA, MLB, and NHL Moneyline for sportsbooks: {self.sportsbooks}")
         
+    # async def _handle_message(self, data: dict):
+    #     """Process incoming websocket message and update internal state."""
+    #     action = data.get('action')
+        
+    #     if action == 'ping':
+    #         return
+            
+    #     # Extract game identifier
+    #     game_data = data.get('data', {})
+    #     game_id = game_data.get('info', {}).get('universal_id') or game_data.get('info', {}).get('game_id') or game_data.get('game')
+    #     sportsbook = game_data.get('sportsbook')
+        
+    #     if not game_id or not sportsbook:
+    #         return
+            
+    #     # Initialize game dict if needed
+    #     if game_id not in self.games:
+    #         self.games[game_id] = {}
+            
+    #     if action == 'initial_state' or action == 'game_update':
+    #         # Store/update full game state for this sportsbook
+    #         self.games[game_id][sportsbook] = {
+    #             'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
+    #             'action': action,
+    #             'data': game_data
+    #         }
+            
+    #     elif action == 'line_update':
+    #         # Update specific line in existing game state
+    #         if sportsbook in self.games[game_id]:
+    #             existing_state = self.games[game_id][sportsbook]
+                
+    #             # Update the specific outcome
+    #             outcome_name = game_data.get('outcome_name')
+    #             outcome_target = game_data.get('outcome_target')
+                
+    #             if outcome_name and outcome_target:
+    #                 outcome_key = f"{outcome_target} {outcome_name}"
+                    
+    #                 if 'data' not in existing_state:
+    #                     existing_state['data'] = {}
+    #                 if 'outcomes' not in existing_state['data']:
+    #                     existing_state['data']['outcomes'] = {}
+                        
+    #                 existing_state['data']['outcomes'][outcome_key] = {
+    #                     'odds': game_data.get('odds'),
+    #                     'link': game_data.get('link'),
+    #                     'outcome_name': outcome_name,
+    #                     'outcome_line': game_data.get('outcome_line'),
+    #                     'outcome_over_under': game_data.get('outcome_over_under'),
+    #                     'outcome_target': outcome_target
+    #                 }
+                    
+    #             existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+    #             existing_state['action'] = 'line_update'
+                
+    #     elif action == 'game_removed':
+    #         # Remove game for this sportsbook
+    #         if sportsbook in self.games.get(game_id, {}):
+    #             del self.games[game_id][sportsbook]
+    #         # Clean up game_id if no sportsbooks left
+    #         if game_id in self.games and not self.games[game_id]:
+    #             del self.games[game_id]
+                
+    #     elif action == 'sport_clear':
+    #         # Remove all games for this sport and sportsbook
+    #         sport = game_data.get('sport')
+    #         if sport == 'NBA':
+    #             for gid in list(self.games.keys()):
+    #                 if sportsbook in self.games[gid]:
+    #                     del self.games[gid][sportsbook]
+    #                 if not self.games[gid]:
+    #                     del self.games[gid]
+                        
+    #     elif action == 'book_clear':
+    #         # Remove all games for this sportsbook
+    #         for gid in list(self.games.keys()):
+    #             if sportsbook in self.games[gid]:
+    #                 del self.games[gid][sportsbook]
+    #             if not self.games[gid]:
+    #                 del self.games[gid]
+
     async def _handle_message(self, data: dict):
         """Process incoming websocket message and update internal state."""
         action = data.get('action')
@@ -53,20 +135,18 @@ class BoltOddsManager:
         if action == 'ping':
             return
             
-        # Extract game identifier
         game_data = data.get('data', {})
-        game_id = game_data.get('info', {}).get('universal_id') or game_data.get('info', {}).get('game_id') or game_data.get('game')
+        game_id = game_data.get('info', {}).get('id') or game_data.get('game')
         sportsbook = game_data.get('sportsbook')
         
         if not game_id or not sportsbook:
             return
             
-        # Initialize game dict if needed
         if game_id not in self.games:
             self.games[game_id] = {}
             
-        if action == 'initial_state' or action == 'game_update':
-            # Store/update full game state for this sportsbook
+        if action in ('initial_state', 'game_update'):
+            # Full state replacement — both send complete outcomes dict
             self.games[game_id][sportsbook] = {
                 'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
                 'action': action,
@@ -74,54 +154,39 @@ class BoltOddsManager:
             }
             
         elif action == 'line_update':
-            # Update specific line in existing game state
-            if sportsbook in self.games[game_id]:
-                existing_state = self.games[game_id][sportsbook]
+            # Partial update — only one outcome included
+            # If game/sportsbook doesn't exist yet, skip (wait for initial_state first)
+            if sportsbook not in self.games[game_id]:
+                return
                 
-                # Update the specific outcome
-                outcome_name = game_data.get('outcome_name')
-                outcome_target = game_data.get('outcome_target')
+            existing_state = self.games[game_id][sportsbook]
+            
+            # Merge the single outcome into existing outcomes
+            if 'outcomes' not in existing_state['data']:
+                existing_state['data']['outcomes'] = {}
                 
-                if outcome_name and outcome_target:
-                    outcome_key = f"{outcome_target} {outcome_name}"
-                    
-                    if 'data' not in existing_state:
-                        existing_state['data'] = {}
-                    if 'outcomes' not in existing_state['data']:
-                        existing_state['data']['outcomes'] = {}
-                        
-                    existing_state['data']['outcomes'][outcome_key] = {
-                        'odds': game_data.get('odds'),
-                        'link': game_data.get('link'),
-                        'outcome_name': outcome_name,
-                        'outcome_line': game_data.get('outcome_line'),
-                        'outcome_over_under': game_data.get('outcome_over_under'),
-                        'outcome_target': outcome_target
-                    }
-                    
-                existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
-                existing_state['action'] = 'line_update'
+            outcome_target = game_data.get('outcomes', {})
+            if outcome_target:
+                # game_data['outcomes'] has ONE key: "Team Moneyline"
+                existing_state['data']['outcomes'].update(outcome_target)
                 
+            existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+            existing_state['action'] = 'line_update'
+            
         elif action == 'game_removed':
-            # Remove game for this sportsbook
             if sportsbook in self.games.get(game_id, {}):
                 del self.games[game_id][sportsbook]
-            # Clean up game_id if no sportsbooks left
             if game_id in self.games and not self.games[game_id]:
                 del self.games[game_id]
                 
         elif action == 'sport_clear':
-            # Remove all games for this sport and sportsbook
-            sport = game_data.get('sport')
-            if sport == 'NBA':
-                for gid in list(self.games.keys()):
-                    if sportsbook in self.games[gid]:
-                        del self.games[gid][sportsbook]
-                    if not self.games[gid]:
-                        del self.games[gid]
-                        
+            for gid in list(self.games.keys()):
+                if sportsbook in self.games[gid]:
+                    del self.games[gid][sportsbook]
+                if not self.games[gid]:
+                    del self.games[gid]
+                    
         elif action == 'book_clear':
-            # Remove all games for this sportsbook
             for gid in list(self.games.keys()):
                 if sportsbook in self.games[gid]:
                     del self.games[gid][sportsbook]
@@ -137,9 +202,9 @@ class BoltOddsManager:
                 message = await self.websocket.recv()
                 msg = json.loads(message)
                 
-                for data in msg:
-                    action = data.get('action')
-                    print(f"[WEBSOCKET] {action}: {data.get('data', {}).get('sportsbook', 'N/A')} - {data.get('data', {}).get('game', 'N/A')}")
+                # for data in msg:
+                #     action = data.get('action')
+                #     print(f"[WEBSOCKET] {action}: {data.get('data', {}).get('sportsbook', 'N/A')} - {data.get('data', {}).get('game', 'N/A')}")
 
                 for data in msg:
                     await self._handle_message(data)
