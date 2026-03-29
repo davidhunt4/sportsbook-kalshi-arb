@@ -14,16 +14,6 @@ The bot:
 
 Supports multiple sports: **NBA**, **MLB**, **NHL**
 
-## Price Jump Analysis Tool
-
-A new tool has been added to analyze historical price movements in NBA H2H contracts. This tool can:
-- Detect all price jumps >2.5% using 1-minute candlestick data
-- Track when jumps happen relative to contract launch and game start
-- Measure jump duration and volume
-- Export data for further analysis
-
-See [PRICE_JUMP_ANALYSIS_README.md](PRICE_JUMP_ANALYSIS_README.md) for detailed documentation.
-
 ## Setup Instructions
 
 ### Prerequisites
