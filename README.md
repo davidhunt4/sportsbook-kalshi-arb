@@ -1,22 +1,38 @@
 # Kalshi Trading Bot
 
-1. Fetch NBA game markets from Kalshi
-2. Fetch odds from Pinnacle (via The Odds API)
-3. Calculates expected value by comparing Pinnacle's true odds vs Kalshi's prices
-4. Executes buy orders on Kalshi for opportunities with >2.5% EV
-5. Sends trade notifications via AWS SNS (optional)
+A real-time arbitrage trading bot that monitors odds discrepancies between Kalshi and major sportsbooks.
 
-Next step is to sell once Kalshi adjusts to the sportsbook-implied odds. Also to stop getting rate limited for the sportsbook API.
+## Overview
+
+The bot:
+1. Connects to the **Bolt API stream** for real-time sportsbook odds (multiple books aggregated)
+2. Fetches **Kalshi moneyline markets** for NBA, MLB, and NHL games
+3. Averages Bolt odds across all connected sportsbooks
+4. Identifies arbitrage opportunities when Kalshi odds are >2.5% lower than market average
+5. Logs trade opportunities to a CSV file for execution
+6. Automatically tracks positions and identifies exit opportunities
+
+Supports multiple sports: **NBA**, **MLB**, **NHL**
+
+## Price Jump Analysis Tool
+
+A new tool has been added to analyze historical price movements in NBA H2H contracts. This tool can:
+- Detect all price jumps >2.5% using 1-minute candlestick data
+- Track when jumps happen relative to contract launch and game start
+- Measure jump duration and volume
+- Export data for further analysis
+
+See [PRICE_JUMP_ANALYSIS_README.md](PRICE_JUMP_ANALYSIS_README.md) for detailed documentation.
 
 ## Setup Instructions
 
 ### Prerequisites
 
-- Python 3.7 or higher
+- Python 3.9 or higher
 - pip (Python package manager)
-- Git
 - A Kalshi API account with API credentials
-- (Optional) AWS account if using SNS notifications
+- A Bolt API account with API credentials
+- EC2 instance or local machine for running the bot
 
 ### 1. Clone the Repository
 
@@ -31,7 +47,7 @@ cd YOUR_REPO_NAME
 pip install -r requirements.txt
 ```
 
-Or if you prefer using a virtual environment (recommended):
+Or using a virtual environment (recommended):
 
 ```bash
 python3 -m venv venv
@@ -39,128 +55,67 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Set Up Credentials
+### 3. Configure Environment Variables
 
-#### Create Private Key File
-
-1. Obtain your private key from Kalshi
-2. Create a file named `demo_private_key.pem` in the project root directory
-3. Paste your private key content into this file
-
-**Important:** The `.pem` file is already in `.gitignore` and will not be committed to version control.
-
-#### Configure Environment Variables
-
-Create a `.env` file with the following content:
+Create a `.env` file in the project root with:
 
 ```bash
 # Required API Keys
+BOLT_API_KEY=your_bolt_api_key_here
 KALSHI_DEMO_API_KEY=your_kalshi_api_key_here
-PINNACLE_API_KEY=your_pinnacle_api_key_here
 
-# Optional - AWS SNS for trade notifications
-SNS_TOPIC_ARN=arn:aws:sns:us-east-1:123456789012:your-topic-name
+# Optional settings (defaults shown)
+TRADE_LOG_PATH=./trade_log.csv
+LOOP_INTERVAL_SECONDS=2
+WARMUP_SECONDS=10
 ```
 
-**Note:** The `.env` file is already in `.gitignore` and will not be committed to version control.
+**Note:** The `.env` file is in `.gitignore` and will not be committed.
 
-#### AWS Credentials (for SNS notifications)
+### 4. Running the Bot
 
-**For Lambda deployment:** Attach an IAM role to your Lambda function with SNS publish permissions. No explicit credentials needed.
-
-**For local development:** Configure AWS CLI:
-```bash
-aws configure
-```
-This stores credentials in `~/.aws/credentials`. The boto3 client automatically uses these credentials.
-
-### 4. Running the Scripts
-
-You can either run the bot locally or deploy it to AWS Lambda.
-
-#### Option A: Run Locally
-
-Uncomment the code at the bottom of `full_test_script.py` and run:
+#### Local Execution
 
 ```bash
-python full_test_script.py
+python get_kandb_odds_aws.py
 ```
 
-#### Option B: Deploy to AWS Lambda
+The bot will:
+- Connect to the Bolt WebSocket stream
+- Wait for data to arrive (see `WARMUP_SECONDS`)
+- Begin monitoring for arbitrage opportunities
+- Log trades to `TRADE_LOG_PATH` (CSV format)
 
-**Prerequisites:**
-- AWS account
-- AWS CLI installed and configured: `aws configure`
+#### EC2 Deployment
 
-**Step 1: Create an IAM Role for Lambda**
-
-1. Go to AWS Console → IAM → Roles → Create role
-2. Select "Lambda" as the trusted entity
-3. Attach policies:
-   - `AWSLambdaBasicExecutionRole` (for CloudWatch logs)
-   - `AmazonSNSFullAccess` (or create custom policy with SNS publish permissions)
-4. Name it (e.g., `kalshi-lambda-role`) and create
-
-**Step 2: Create the Lambda Function**
-
-Via AWS Console:
-1. Go to AWS Lambda → Create function
-2. Choose "Author from scratch"
-3. Function name: `kalshi-trading-bot` (or match name in update_lambda.sh)
-4. Runtime: Python 3.11
-5. Architecture: x86_64
-6. Execution role: Use the role you created above
-7. Create function
-
-**Step 3: Configure the Lambda Function**
-
-1. **Set environment variables:**
-   - `KALSHI_DEMO_API_KEY` = your Kalshi API key
-   - `PINNACLE_API_KEY` = your Pinnacle API key
-   - `SNS_TOPIC_ARN` = your SNS topic ARN
-
-2. **Configure settings:**
-   - Handler: `full_test_script.lambda_handler`
-   - Timeout: 30 seconds (or more)
-   - Memory: 512 MB (or more)
-
-**Step 4: Deploy your code**
-
-1. **Set up the package directory:**
-   ```bash
-   # Install dependencies into package directory
-   pip install -r requirements.txt -t package/
-   
-   # Copy your private key
-   cp demo_private_key.pem package/
-   ```
-
-2. **Deploy using the provided script:**
-   ```bash
-   chmod +x update_lambda.sh
-   ./update_lambda.sh
-   ```
-   
-   **Note:** This script assumes your function is named `kalshi-trading-bot`. If you used a different name, edit the function name in `update_lambda.sh`.
-
-**Step 5: Test the function**
-
-In AWS Console, create a test event (empty JSON `{}`) and invoke the function to verify it works.
-
-**Subsequent Updates:**
-
-After initial setup, just run `./update_lambda.sh` to deploy code changes.
+See [EC2_QUICK_START.md](ec2stuff/EC2_QUICK_START.md) for detailed instructions on setting up and running on AWS EC2 with systemd service management.
 
 ## Project Structure
 
 ```
 .
-├── full_test_script.py      # Main trading script with Lambda handler
+├── get_kandb_odds_aws.py    # Main trading bot (Bolt + Kalshi arbitrage)
+├── bolt_utils.py            # Bolt API utilities and WebSocket stream
 ├── kalshi_utils.py          # Kalshi API utilities
-├── pinnacle_utils.py        # Pinnacle API utilities
+├── pinnacle_utils.py        # Pinnacle API utilities (legacy)
 ├── requirements.txt         # Python dependencies
-├── update_lambda.sh         # AWS Lambda deployment script
-├── demo_private_key.pem     # Your Kalshi private key (not in repo)
+├── trade_log.csv            # Trade execution log (auto-generated)
 ├── .env                     # Environment variables (not in repo)
-└── package/                 # Lambda deployment package with dependencies
+├── jump_data_exploration/   # Price jump analysis tool
+└── testing/                 # Test scripts and notebooks
 ```
+
+## Trade Log Format
+
+The `trade_log.csv` file logs all identified opportunities:
+
+```
+Date, Time, Home Team, Away Team, Action, Ticker, Kalshi Price, Bolt Average Price, Sportsbook, Timestamp
+2026-03-29, NBA, Boston, Miami, BUY, ..., 0.52, 0.56, average, 2026-03-29T14:32:10.123456
+```
+
+Fields:
+- **Action**: `BUY` (buy opportunity) or `SELL` (close position)
+- **Kalshi Price**: The asking/bidding price on Kalshi
+- **Bolt Average Price**: Implied probability from averaged sportsbook odds
+- **Sportsbook**: Which book(s) provided the quote or "average"
