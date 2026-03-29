@@ -10,3 +10,4 @@ output.json
 jump_data_exploration/
 ec2stuff/
 trade_log.csv
+market_correlation_attempt/
