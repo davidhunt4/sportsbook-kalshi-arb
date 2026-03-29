@@ -6,6 +6,7 @@ import time
 import os
 from pathlib import Path
 from datetime import datetime
+import pytz
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
@@ -98,12 +99,49 @@ bteam_to_klocation = {
     'San Diego Padres': 'San Diego',
     'San Francisco Giants': 'San Francisco',
     'Seattle Mariners': 'Seattle',
-    'St. Louis Cardinals': 'St. Louis',
+    'St Louis Cardinals': 'St. Louis',
     'Tampa Bay Rays': 'Tampa Bay',
     'Texas Rangers': 'Texas',
     'Toronto Blue Jays': 'Toronto',
-    'Washington Nationals': 'Washington'
+    'Washington Nationals': 'Washington',
+    #### NHL ####
+    'Anaheim Ducks': 'ANA Ducks',
+    'Boston Bruins': 'BOS Bruins',
+    'Buffalo Sabres': 'BUF Sabres',
+    'Calgary Flames': 'CGY Flames',
+    'Carolina Hurricanes': 'CAR Hurricanes',
+    'Chicago Blackhawks': 'CHI Blackhawks',
+    'Colorado Avalanche': 'COL Avalanche',
+    'Columbus Blue Jackets': 'CBJ Blue Jackets',
+    'Dallas Stars': 'DAL Stars',
+    'Detroit Red Wings': 'DET Red Wings',
+    'Edmonton Oilers': 'EDM Oilers',
+    'Florida Panthers': 'FLA Panthers',
+    'Los Angeles Kings': 'LA Kings',
+    'Minnesota Wild': 'MIN Wild',
+    'Montreal Canadiens': 'MTL Canadiens',
+    'Nashville Predators': 'NSH Predators',
+    'New Jersey Devils': 'NJ Devils',
+    'New York Islanders': 'NYI Islanders',
+    'New York Rangers': 'NYR Rangers',
+    'Ottawa Senators': 'OTT Senators',
+    'Philadelphia Flyers': 'PHI Flyers',
+    'Pittsburgh Penguins': 'PIT Penguins',
+    'San Jose Sharks': 'SJ Sharks',
+    'Seattle Kraken': 'SEA Kraken',
+    'St Louis Blues': 'STL Blues',
+    'Tampa Bay Lightning': 'TB Lightning',
+    'Toronto Maple Leafs': 'TOR Maple Leafs',
+    'Vancouver Canucks': 'VAN Canucks',
+    'Vegas Golden Knights': 'VGK Golden Knights',
+    'Washington Capitals': 'WSH Capitals',
+    'Winnipeg Jets': 'WPG Jets',
+    'Utah Mammoth': 'UTA Mammoth'
 }
+
+def compute_fees(odds, contracts):
+    """Compute fees based on odds. Placeholder for now."""
+    return 0.07 * odds * (1 - odds) * contracts
 
 def compute_average_odds(bolt_data):
     """Average odds across all sportsbooks for each game"""
@@ -139,34 +177,36 @@ def find_diffs(bolt_data, kalshi_data, positions):
     for key, bolt_info in average_only.items():
         if key in kalshi_data:
             kalshi_info = kalshi_data[key]
-            home_diff = bolt_info['home_prob'] - kalshi_info['home_odds']
-            away_diff = bolt_info['away_prob'] - kalshi_info['away_odds']
+            home_diff_buy = bolt_info['home_prob'] - kalshi_info['home_odds_ask']
+            away_diff_buy = bolt_info['away_prob'] - kalshi_info['away_odds_ask']
+            home_diff_sell = bolt_info['home_prob'] - kalshi_info['home_odds_bid']
+            away_diff_sell = bolt_info['away_prob'] - kalshi_info['away_odds_bid']
             with open(TRADE_LOG_PATH, 'a') as f:
-                if home_diff > 0.025:  # Threshold for "notable" difference
+                if home_diff_buy > (compute_fees(kalshi_info['home_odds_ask'], 1) + compute_fees(bolt_info['home_prob'], 1)):  # Threshold for "notable" difference
                     print(f"{key[2]}: {key[0]} vs {key[1]} in {key[3]}")
                     print(f"  Bolt ({bolt_info['sportsbook']}): Home {bolt_info['home_prob']:.4f}")
-                    print(f"  Kalshi: Home {kalshi_info['home_odds']:.4f}")
+                    print(f"  Kalshi: Home {kalshi_info['home_odds_ask']:.4f}")
                     print()
                     if kalshi_info['home_ticker'] not in positions: # only want to buy once currently
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
+                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_ask']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
                         buy_trades.append(kalshi_info['home_ticker'])
-                if away_diff > 0.025:
+                if away_diff_buy > (compute_fees(kalshi_info['away_odds_ask'], 1) + compute_fees(bolt_info['away_prob'], 1)):
                     print(f"{key[2]}: {key[0]} vs {key[1]} in {key[3]}")
                     print(f"  Bolt ({bolt_info['sportsbook']}): Away {bolt_info['away_prob']:.4f}")
-                    print(f"  Kalshi: Away {kalshi_info['away_odds']:.4f}")
+                    print(f"  Kalshi: Away {kalshi_info['away_odds_ask']:.4f}")
                     print()
                     if kalshi_info['away_ticker'] not in positions: # only want to buy once currently
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
+                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_ask']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
                         buy_trades.append(kalshi_info['away_ticker'])
                 
                 # check positions for closing (selling)
-                if home_diff < 0.005:
+                if home_diff_sell < 0.005:
                     if kalshi_info['home_ticker'] in positions:
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
+                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_bid']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
                         sell_trades.append(kalshi_info['home_ticker'])
-                if away_diff < 0.005:
+                if away_diff_sell < 0.005:
                     if kalshi_info['away_ticker'] in positions:
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
+                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_bid']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
                         sell_trades.append(kalshi_info['away_ticker'])
 
     return buy_trades, sell_trades
@@ -191,7 +231,9 @@ async def main():
             start = time.time()
             bolt_data = {}
             bevents = get_bevents()
-            bevents = [event for event in bevents if datetime.strptime(event['data']['info']['when'], "%Y-%m-%d, %I:%M %p") > datetime.now()] # filtering for pregame only
+            et = pytz.timezone('America/New_York')
+            now_et = datetime.now(et).replace(tzinfo=None)
+            bevents = [event for event in bevents if datetime.strptime(event['data']['info']['when'], "%Y-%m-%d, %I:%M %p") > now_et] # filtering for pregame only
             print()
             print("===================== BOLT EVENTS ===========================")
             for event in bevents:
@@ -202,13 +244,15 @@ async def main():
                 try:
                     home_line = event['data']['outcomes'][f'{home_team} Moneyline']['odds']
                     away_line = event['data']['outcomes'][f'{away_team} Moneyline']['odds']
+                    if home_line is None or away_line is None or home_line == '' or away_line == '':
+                        continue
                     home_team_prob, away_team_prob = get_implied_prob(home_line, away_line)
                 except KeyError:
                     print(f"Missing moneyline odds for {home_team} vs {away_team} on {event['data']['sportsbook']}, skipping...")
                     continue
                 home_team = bteam_to_klocation[home_team]
                 away_team = bteam_to_klocation[away_team]
-                print(f"{date}: {home_team} ({home_line}, {home_team_prob:.2f}) vs {away_team} ({away_line}, {away_team_prob:.2f}) on {event['data']['sportsbook']}")
+                print(f"{date}, {league}: {home_team} ({home_line}, {home_team_prob:.2f}) vs {away_team} ({away_line}, {away_team_prob:.2f}) on {event['data']['sportsbook']}")
                 bolt_data[(home_team, away_team, date, league)] = {
                     'home_prob': home_team_prob,
                     'away_prob': away_team_prob,
@@ -217,7 +261,7 @@ async def main():
             
             bolt_averages = compute_average_odds(bolt_data)
             for key, avg_info in bolt_averages.items():
-                print(f'{key[2]}: {key[0]} ({avg_info["home_prob"]:.4f}) vs {key[1]} ({avg_info["away_prob"]:.4f}) on average')
+                print(f'{key[2]}, {key[3]}: {key[0]} ({avg_info["home_prob"]:.4f}) vs {key[1]} ({avg_info["away_prob"]:.4f}) on average')
             bolt_data.update(bolt_averages)
             
             kevents = get_kevents()
@@ -228,19 +272,28 @@ async def main():
                 swap = 0
                 home_team = event['markets'][0]['yes_sub_title']
                 away_team = event['markets'][1]['yes_sub_title']
-                home_team_odds = float(event['markets'][0]['yes_ask_dollars'])
-                away_team_odds = float(event['markets'][1]['yes_ask_dollars'])
+                home_team_odds_ask = float(event['markets'][0]['yes_ask_dollars'])
+                away_team_odds_ask = float(event['markets'][1]['yes_ask_dollars'])
+                home_team_odds_bid = float(event['markets'][0]['yes_bid_dollars'])
+                away_team_odds_bid = float(event['markets'][1]['yes_bid_dollars'])
                 date = kdate_to_bdate(event['markets'][1]['event_ticker'][10:17])
                 league = event['event_ticker'][2:5] # getting what league it is (NBA, NHL, MLB)
-                if home_team != event['title'].split(' at ')[1]:
+                if ' at ' in event['title']:
+                    home_in_title = event['title'].split(' at ')[1]
+                else:
+                    home_in_title = event['title'].split(' vs ')[1]
+                if home_team != home_in_title:
                     home_team, away_team = away_team, home_team
-                    home_team_odds, away_team_odds = away_team_odds, home_team_odds
+                    home_team_odds_ask, away_team_odds_ask = away_team_odds_ask, home_team_odds_ask
+                    home_team_odds_bid, away_team_odds_bid = away_team_odds_bid, home_team_odds_bid
                     swap = 1
-                print(f"{date}: {home_team} ({home_team_odds:.2f}) vs {away_team} ({away_team_odds:.2f}) on Kalshi")
+                print(f"{date}, {league}: {home_team} ({home_team_odds_ask:.2f}) vs {away_team} ({away_team_odds_ask:.2f}) on Kalshi")
                 kalshi_data[(home_team, away_team, date, league)] = {
                     'title': event['title'],
-                    'home_odds': home_team_odds,
-                    'away_odds': away_team_odds,
+                    'home_odds_ask': home_team_odds_ask,
+                    'away_odds_ask': away_team_odds_ask,
+                    'home_odds_bid': home_team_odds_bid,
+                    'away_odds_bid': away_team_odds_bid,
                     'home_ticker': event['markets'][swap]['ticker'],
                     'away_ticker': event['markets'][1 - swap]['ticker']
                 }
