@@ -1,8 +1,7 @@
-from bolt_utils import start_bolt_stream, get_bevents, stop_bolt_stream
-from kalshi_utils import get_kevents
+from bolt_utils import start_bolt_stream, stop_bolt_stream
+from kalshi_utils import get_kevents, start_kalshi_stream, stop_kalshi_stream
 import asyncio
 from dotenv import load_dotenv
-import time
 import os
 from pathlib import Path
 from datetime import datetime
@@ -11,18 +10,18 @@ import pytz
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / '.env')
 TRADE_LOG_PATH = os.getenv('TRADE_LOG_PATH', str(BASE_DIR / 'trade_log.csv'))
-LOOP_INTERVAL_SECONDS = float(os.getenv('LOOP_INTERVAL_SECONDS', '2'))
 WARMUP_SECONDS = float(os.getenv('WARMUP_SECONDS', '10'))
 
-def get_implied_prob(odds1: float, odds2: float) -> float:
+
+def get_implied_prob(odds1: float, odds2: float):
     """Convert american odds to implied probability"""
     odds1 = float(odds1)
     odds2 = float(odds2)
     prob1 = 100 / (odds1 + 100) if odds1 > 0 else abs(odds1) / (abs(odds1) + 100)
     prob2 = 100 / (odds2 + 100) if odds2 > 0 else abs(odds2) / (abs(odds2) + 100)
-
     total = prob1 + prob2
     return prob1 / total, prob2 / total
+
 
 def kdate_to_bdate(kdate: str) -> str:
     """Convert Kalshi date format (26MAR05) to Bolt date format (2026-03-05)"""
@@ -31,14 +30,11 @@ def kdate_to_bdate(kdate: str) -> str:
         'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08',
         'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12'
     }
-    
-    year = kdate[:2]  # '26'
-    month_str = kdate[2:5]  # 'MAR'
-    day = kdate[5:]  # '05'
-    
-    month = months[month_str]
-    
-    return f"20{year}-{month}-{day}"
+    year = kdate[:2]
+    month_str = kdate[2:5]
+    day = kdate[5:]
+    return f"20{year}-{months[month_str]}-{day}"
+
 
 bteam_to_klocation = {
     'Atlanta Hawks': 'Atlanta',
@@ -54,9 +50,9 @@ bteam_to_klocation = {
     'Houston Rockets': 'Houston',
     'Indiana Pacers': 'Indiana',
     'Los Angeles Clippers': 'Los Angeles C',
-    'LA Clippers': 'Los Angeles C',  # Alternative format
+    'LA Clippers': 'Los Angeles C',
     'Los Angeles Lakers': 'Los Angeles L',
-    'LA Lakers': 'Los Angeles L',  # Alternative format
+    'LA Lakers': 'Los Angeles L',
     'Memphis Grizzlies': 'Memphis',
     'Miami Heat': 'Miami',
     'Milwaukee Bucks': 'Milwaukee',
@@ -139,186 +135,255 @@ bteam_to_klocation = {
     'Utah Mammoth': 'UTA Mammoth'
 }
 
+
 def compute_fees(odds, contracts):
     """Compute fees based on odds. Placeholder for now."""
     return 0.07 * odds * (1 - odds) * contracts
 
-def compute_average_odds(bolt_data):
-    """Average odds across all sportsbooks for each game"""
-    game_averages = {}
-    
-    # Group by (home_team, away_team, date)
-    games = {}
-    for key, info in bolt_data.items():
-        if key not in games:
-            games[key] = []
-        games[key].append(info)
-    
-    # Average probabilities per game
-    for key, infos in games.items():
-        home_probs = [info['home_prob'] for info in infos]
-        away_probs = [info['away_prob'] for info in infos]
-        
-        game_averages[key] = {
-            'home_prob': sum(home_probs) / len(home_probs),
-            'away_prob': sum(away_probs) / len(away_probs),
-            'sportsbook': 'average'
-        }
-    
-    return game_averages
-
-def find_diffs(bolt_data, kalshi_data, positions):
-    print()
-    print("============ NOTABLE DIFFERENCES (2.5% lower on kalshi) ============")
-    buy_trades = []
-    sell_trades = []
-    average_only = {k: v for k, v in bolt_data.items() if v['sportsbook'] == 'average'}
-    # for key, bolt_info in bolt_data.items()
-    for key, bolt_info in average_only.items():
-        if key in kalshi_data:
-            kalshi_info = kalshi_data[key]
-            home_diff_buy = bolt_info['home_prob'] - kalshi_info['home_odds_ask']
-            away_diff_buy = bolt_info['away_prob'] - kalshi_info['away_odds_ask']
-            home_diff_sell = bolt_info['home_prob'] - kalshi_info['home_odds_bid']
-            away_diff_sell = bolt_info['away_prob'] - kalshi_info['away_odds_bid']
-            with open(TRADE_LOG_PATH, 'a') as f:
-                if home_diff_buy > (compute_fees(kalshi_info['home_odds_ask'], 1) + compute_fees(bolt_info['home_prob'], 1)):  # Threshold for "notable" difference
-                    print(f"{key[2]}: {key[0]} vs {key[1]} in {key[3]}")
-                    print(f"  Bolt ({bolt_info['sportsbook']}): Home {bolt_info['home_prob']:.4f}")
-                    print(f"  Kalshi: Home {kalshi_info['home_odds_ask']:.4f}")
-                    print()
-                    if kalshi_info['home_ticker'] not in positions: # only want to buy once currently
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_ask']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
-                        buy_trades.append(kalshi_info['home_ticker'])
-                if away_diff_buy > (compute_fees(kalshi_info['away_odds_ask'], 1) + compute_fees(bolt_info['away_prob'], 1)):
-                    print(f"{key[2]}: {key[0]} vs {key[1]} in {key[3]}")
-                    print(f"  Bolt ({bolt_info['sportsbook']}): Away {bolt_info['away_prob']:.4f}")
-                    print(f"  Kalshi: Away {kalshi_info['away_odds_ask']:.4f}")
-                    print()
-                    if kalshi_info['away_ticker'] not in positions: # only want to buy once currently
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_ask']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
-                        buy_trades.append(kalshi_info['away_ticker'])
-                
-                # check positions for closing (selling)
-                if home_diff_sell < 0.005:
-                    if kalshi_info['home_ticker'] in positions:
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_bid']:.4f}, {bolt_info['home_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
-                        sell_trades.append(kalshi_info['home_ticker'])
-                if away_diff_sell < 0.005:
-                    if kalshi_info['away_ticker'] in positions:
-                        f.write(f"{key[2]}, {key[3]}, {key[0]}, {key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_bid']:.4f}, {bolt_info['away_prob']:.4f}, {bolt_info['sportsbook']}, {datetime.now().isoformat()}\n")
-                        sell_trades.append(kalshi_info['away_ticker'])
-
-    return buy_trades, sell_trades
 
 async def main():
     if not os.getenv('BOLT_API_KEY'):
         raise RuntimeError('Missing BOLT_API_KEY. Set it in environment or .env on EC2.')
-    if not os.getenv('KALSHI_DEMO_API_KEY'):
-        raise RuntimeError('Missing KALSHI_DEMO_API_KEY. Set it in environment or .env on EC2.')
+    if not os.getenv('KALSHI_PROD_API_KEY'):
+        raise RuntimeError('Missing KALSHI_PROD_API_KEY. Set it in environment or .env on EC2.')
 
-    # Start the stream (runs in background)
-    await start_bolt_stream()
-    
-    # Wait for data to come in
-    print(f"Waiting {WARMUP_SECONDS:g} seconds for data...")
-    await asyncio.sleep(WARMUP_SECONDS)  # Must use 'await' here
-    positions = set()
-    
+    et = pytz.timezone('America/New_York')
+
+    # ── Shared state ──────────────────────────────────────────────────────────
+    # Bolt: per-sportsbook odds and averaged odds, keyed by game_key tuple
+    bolt_per_sportsbook = {}   # game_key -> {sportsbook: {home_prob, away_prob}}
+    bolt_averages = {}         # game_key -> {home_prob, away_prob, sportsbook: 'average'}
+    bolt_id_to_key = {}        # bolt game_id -> game_key
+
+    # Kalshi: best bid/ask per market, keyed by game_key tuple
+    kalshi_cache = {}          # game_key -> {home_odds_ask, away_odds_ask, home_odds_bid, away_odds_bid, home_ticker, away_ticker}
+    kalshi_ticker_to_game = {} # market_ticker -> (game_key, 'home'|'away')
+
+    positions = set()          # set of tickers we currently hold
+
+    # ── Single-game arb check ─────────────────────────────────────────────────
+    def check_game(game_key):
+        """Compare a single game's Bolt average vs Kalshi prices and log signals."""
+        if game_key not in bolt_averages or game_key not in kalshi_cache:
+            return
+
+        bolt_info = bolt_averages[game_key]
+        kalshi_info = kalshi_cache[game_key]
+
+        if not kalshi_info.get('home_odds_ask') or not kalshi_info.get('away_odds_ask'):
+            return
+
+        home_diff_buy = bolt_info['home_prob'] - kalshi_info['home_odds_ask']
+        away_diff_buy = bolt_info['away_prob'] - kalshi_info['away_odds_ask']
+        home_diff_sell = bolt_info['home_prob'] - kalshi_info['home_odds_bid']
+        away_diff_sell = bolt_info['away_prob'] - kalshi_info['away_odds_bid']
+
+        with open(TRADE_LOG_PATH, 'a') as f:
+            if home_diff_buy > (compute_fees(kalshi_info['home_odds_ask'], 1) + compute_fees(bolt_info['home_prob'], 1)):
+                print(f"\n{game_key[2]}: {game_key[0]} vs {game_key[1]} in {game_key[3]}")
+                print(f"  Bolt (average): Home {bolt_info['home_prob']:.4f}")
+                print(f"  Kalshi: Home {kalshi_info['home_odds_ask']:.4f}")
+                if kalshi_info['home_ticker'] not in positions:
+                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_ask']:.4f}, {bolt_info['home_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                    positions.add(kalshi_info['home_ticker'])
+
+            if away_diff_buy > (compute_fees(kalshi_info['away_odds_ask'], 1) + compute_fees(bolt_info['away_prob'], 1)):
+                print(f"\n{game_key[2]}: {game_key[0]} vs {game_key[1]} in {game_key[3]}")
+                print(f"  Bolt (average): Away {bolt_info['away_prob']:.4f}")
+                print(f"  Kalshi: Away {kalshi_info['away_odds_ask']:.4f}")
+                if kalshi_info['away_ticker'] not in positions:
+                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_ask']:.4f}, {bolt_info['away_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                    positions.add(kalshi_info['away_ticker'])
+
+            if home_diff_sell < 0.005 and kalshi_info['home_ticker'] in positions:
+                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_bid']:.4f}, {bolt_info['home_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                positions.discard(kalshi_info['home_ticker'])
+
+            if away_diff_sell < 0.005 and kalshi_info['away_ticker'] in positions:
+                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_bid']:.4f}, {bolt_info['away_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                positions.discard(kalshi_info['away_ticker'])
+
+    # ── Bolt callbacks ────────────────────────────────────────────────────────
+    async def on_bolt_update(game_id, sportsbook, game_data):
+        """Fired by BoltOddsManager for initial_state, game_update, and line_update."""
+        # Only consider pre-game markets
+        try:
+            game_time = datetime.strptime(game_data['info']['when'], "%Y-%m-%d, %I:%M %p")
+        except (KeyError, ValueError):
+            return
+        if game_time <= datetime.now(et).replace(tzinfo=None):
+            return
+
+        home_team_raw = game_data.get('home_team')
+        away_team_raw = game_data.get('away_team')
+        if not home_team_raw or not away_team_raw:
+            return
+
+        try:
+            home_team = bteam_to_klocation[home_team_raw]
+            away_team = bteam_to_klocation[away_team_raw]
+        except KeyError:
+            return
+
+        try:
+            home_line = game_data['outcomes'][f'{home_team_raw} Moneyline']['odds']
+            away_line = game_data['outcomes'][f'{away_team_raw} Moneyline']['odds']
+        except KeyError:
+            return
+        if home_line is None or away_line is None or home_line == '' or away_line == '':
+            return
+
+        date = game_data['info']['when'].split(',')[0]
+        league = game_data.get('sport', '')
+        game_key = (home_team, away_team, date, league)
+        bolt_id_to_key[game_id] = game_key
+
+        home_prob, away_prob = get_implied_prob(home_line, away_line)
+
+        if game_key not in bolt_per_sportsbook:
+            bolt_per_sportsbook[game_key] = {}
+        bolt_per_sportsbook[game_key][sportsbook] = {
+            'home_prob': home_prob,
+            'away_prob': away_prob,
+        }
+
+        # Recompute average across all sportsbooks for this game
+        book_data = bolt_per_sportsbook[game_key]
+        avg_home = sum(v['home_prob'] for v in book_data.values()) / len(book_data)
+        avg_away = sum(v['away_prob'] for v in book_data.values()) / len(book_data)
+        bolt_averages[game_key] = {
+            'home_prob': avg_home,
+            'away_prob': avg_away,
+            'sportsbook': 'average',
+        }
+
+        check_game(game_key)
+
+    async def on_bolt_remove(game_id, sportsbook):
+        """Fired when Bolt removes a game (game_removed / sport_clear / book_clear)."""
+        game_key = bolt_id_to_key.get(game_id)
+        if game_key is None:
+            return
+
+        if game_key in bolt_per_sportsbook:
+            bolt_per_sportsbook[game_key].pop(sportsbook, None)
+            if not bolt_per_sportsbook[game_key]:
+                del bolt_per_sportsbook[game_key]
+                bolt_averages.pop(game_key, None)
+                bolt_id_to_key.pop(game_id, None)
+            else:
+                book_data = bolt_per_sportsbook[game_key]
+                avg_home = sum(v['home_prob'] for v in book_data.values()) / len(book_data)
+                avg_away = sum(v['away_prob'] for v in book_data.values()) / len(book_data)
+                bolt_averages[game_key] = {
+                    'home_prob': avg_home,
+                    'away_prob': avg_away,
+                    'sportsbook': 'average',
+                }
+
+    # ── Kalshi callback ───────────────────────────────────────────────────────
+    async def on_kalshi_update(ticker_msg):
+        """Fired by KalshiOddsManager for every 'ticker' WebSocket message."""
+        market_ticker = ticker_msg.get('market_ticker')
+        if not market_ticker or market_ticker not in kalshi_ticker_to_game:
+            return
+
+        game_key, side = kalshi_ticker_to_game[market_ticker]
+        if game_key not in kalshi_cache:
+            return
+
+        entry = kalshi_cache[game_key]
+        updated = False
+
+        yes_bid = ticker_msg.get('yes_bid_dollars')
+        yes_ask = ticker_msg.get('yes_ask_dollars')
+
+        if yes_bid is not None:
+            try:
+                val = float(yes_bid)
+                entry['home_odds_bid' if side == 'home' else 'away_odds_bid'] = val
+                updated = True
+            except (ValueError, TypeError):
+                pass
+
+        if yes_ask is not None:
+            try:
+                val = float(yes_ask)
+                entry['home_odds_ask' if side == 'home' else 'away_odds_ask'] = val
+                updated = True
+            except (ValueError, TypeError):
+                pass
+
+        if updated:
+            check_game(game_key)
+
+    # ── Bootstrap Kalshi state via REST ───────────────────────────────────────
     try:
-        while True:
-            # Get current game states anytime
-            start = time.time()
-            bolt_data = {}
-            
-            # Fetch Bolt events with error handling
-            try:
-                bevents = get_bevents()
-            except Exception as e:
-                print(f"[ERROR] Failed to fetch Bolt events: {e}")
-                bevents = []
-            et = pytz.timezone('America/New_York')
-            now_et = datetime.now(et).replace(tzinfo=None)
-            bevents = [event for event in bevents if datetime.strptime(event['data']['info']['when'], "%Y-%m-%d, %I:%M %p") > now_et] # filtering for pregame only
-            print()
-            print("===================== BOLT EVENTS ===========================")
-            for event in bevents:
-                home_team = event['data']['home_team']
-                away_team = event['data']['away_team']
-                date = event['data']['info']['when'].split(',')[0]
-                league = event['data']['sport']
-                try:
-                    home_line = event['data']['outcomes'][f'{home_team} Moneyline']['odds']
-                    away_line = event['data']['outcomes'][f'{away_team} Moneyline']['odds']
-                    if home_line is None or away_line is None or home_line == '' or away_line == '':
-                        continue
-                    home_team_prob, away_team_prob = get_implied_prob(home_line, away_line)
-                except KeyError:
-                    print(f"Missing moneyline odds for {home_team} vs {away_team} on {event['data']['sportsbook']}, skipping...")
-                    continue
-                home_team = bteam_to_klocation[home_team]
-                away_team = bteam_to_klocation[away_team]
-                print(f"{date}, {league}: {home_team} ({home_line}, {home_team_prob:.2f}) vs {away_team} ({away_line}, {away_team_prob:.2f}) on {event['data']['sportsbook']}")
-                bolt_data[(home_team, away_team, date, league)] = {
-                    'home_prob': home_team_prob,
-                    'away_prob': away_team_prob,
-                    'sportsbook': event['data']['sportsbook']
-                }
-            
-            bolt_averages = compute_average_odds(bolt_data)
-            for key, avg_info in bolt_averages.items():
-                print(f'{key[2]}, {key[3]}: {key[0]} ({avg_info["home_prob"]:.4f}) vs {key[1]} ({avg_info["away_prob"]:.4f}) on average')
-            bolt_data.update(bolt_averages)
-            
-            # Fetch Kalshi events with error handling and retry
-            try:
-                kevents = get_kevents()
-            except Exception as e:
-                print(f"[ERROR] Failed to fetch Kalshi events (attempt failed): {e}")
-                kevents = []
-            
-            kalshi_data = {}
-            print()
-            print("===================== KALSHI EVENTS ===========================")
-            for event in kevents:
-                swap = 0
-                home_team = event['markets'][0]['yes_sub_title']
-                away_team = event['markets'][1]['yes_sub_title']
-                home_team_odds_ask = float(event['markets'][0]['yes_ask_dollars'])
-                away_team_odds_ask = float(event['markets'][1]['yes_ask_dollars'])
-                home_team_odds_bid = float(event['markets'][0]['yes_bid_dollars'])
-                away_team_odds_bid = float(event['markets'][1]['yes_bid_dollars'])
-                date = kdate_to_bdate(event['markets'][1]['event_ticker'][10:17])
-                league = event['event_ticker'][2:5] # getting what league it is (NBA, NHL, MLB)
-                if ' at ' in event['title']:
-                    home_in_title = event['title'].split(' at ')[1]
-                else:
-                    home_in_title = event['title'].split(' vs ')[1]
-                if home_team != home_in_title:
-                    home_team, away_team = away_team, home_team
-                    home_team_odds_ask, away_team_odds_ask = away_team_odds_ask, home_team_odds_ask
-                    home_team_odds_bid, away_team_odds_bid = away_team_odds_bid, home_team_odds_bid
-                    swap = 1
-                print(f"{date}, {league}: {home_team} ({home_team_odds_ask:.2f}) vs {away_team} ({away_team_odds_ask:.2f}) on Kalshi")
-                kalshi_data[(home_team, away_team, date, league)] = {
-                    'title': event['title'],
-                    'home_odds_ask': home_team_odds_ask,
-                    'away_odds_ask': away_team_odds_ask,
-                    'home_odds_bid': home_team_odds_bid,
-                    'away_odds_bid': away_team_odds_bid,
-                    'home_ticker': event['markets'][swap]['ticker'],
-                    'away_ticker': event['markets'][1 - swap]['ticker']
-                }
+        kevents = get_kevents()
+    except Exception as e:
+        print(f"[ERROR] Initial Kalshi fetch failed: {e}")
+        kevents = []
 
-            buy_trades, sell_trades = find_diffs(bolt_data, kalshi_data, positions)
-            positions.update(buy_trades)
-            for ticker in sell_trades:
-                if ticker in positions:
-                    positions.remove(ticker)
-            elapsed = time.time() - start
-            await asyncio.sleep(max(0, LOOP_INTERVAL_SECONDS - elapsed))
+    print(f"Loaded {len(kevents)} Kalshi events via REST")
+    for event in kevents:
+        try:
+            swap = 0
+            home_team = event['markets'][0]['yes_sub_title']
+            away_team = event['markets'][1]['yes_sub_title']
+            home_team_odds_ask = float(event['markets'][0]['yes_ask_dollars'])
+            away_team_odds_ask = float(event['markets'][1]['yes_ask_dollars'])
+            home_team_odds_bid = float(event['markets'][0]['yes_bid_dollars'])
+            away_team_odds_bid = float(event['markets'][1]['yes_bid_dollars'])
+            date = kdate_to_bdate(event['markets'][1]['event_ticker'][10:17])
+            league = event['event_ticker'][2:5]
+
+            if ' at ' in event['title']:
+                home_in_title = event['title'].split(' at ')[1]
+            else:
+                home_in_title = event['title'].split(' vs ')[1]
+
+            if home_team != home_in_title:
+                home_team, away_team = away_team, home_team
+                home_team_odds_ask, away_team_odds_ask = away_team_odds_ask, home_team_odds_ask
+                home_team_odds_bid, away_team_odds_bid = away_team_odds_bid, home_team_odds_bid
+                swap = 1
+
+            game_key = (home_team, away_team, date, league)
+            home_ticker = event['markets'][swap]['ticker']
+            away_ticker = event['markets'][1 - swap]['ticker']
+
+            kalshi_cache[game_key] = {
+                'title': event['title'],
+                'home_odds_ask': home_team_odds_ask,
+                'away_odds_ask': away_team_odds_ask,
+                'home_odds_bid': home_team_odds_bid,
+                'away_odds_bid': away_team_odds_bid,
+                'home_ticker': home_ticker,
+                'away_ticker': away_ticker,
+            }
+            kalshi_ticker_to_game[home_ticker] = (game_key, 'home')
+            kalshi_ticker_to_game[away_ticker] = (game_key, 'away')
+
+        except Exception as e:
+            print(f"[ERROR] Failed to parse Kalshi event {event.get('event_ticker', '?')}: {e}")
+
+    print(f"Kalshi cache: {len(kalshi_cache)} games, {len(kalshi_ticker_to_game)} tickers")
+
+    # ── Start streams ─────────────────────────────────────────────────────────
+    await start_bolt_stream(on_update=on_bolt_update, on_remove=on_bolt_remove)
+    print(f"Waiting {WARMUP_SECONDS:g}s for Bolt initial state...")
+    await asyncio.sleep(WARMUP_SECONDS)
+
+    all_tickers = list(kalshi_ticker_to_game.keys())
+    await start_kalshi_stream(all_tickers, on_update=on_kalshi_update)
+
+    # Keep running until interrupted; streams live as background tasks
+    try:
+        await asyncio.get_running_loop().create_future()
     finally:
         await stop_bolt_stream()
+        await stop_kalshi_stream()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
