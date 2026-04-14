@@ -39,6 +39,9 @@ def sign_pss_text(private_key: rsa.RSAPrivateKey, text: str) -> str:
 
 import requests
 import datetime
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
 
 def get_time():
     current_time = datetime.datetime.now()
@@ -46,6 +49,20 @@ def get_time():
     current_time_milliseconds = int(timestamp * 1000)
     timestampt_str = str(current_time_milliseconds)
     return timestampt_str
+
+def _create_session_with_retries(max_retries=3, backoff_factor=0.5, timeout=10):
+    """Create a requests session with automatic retry logic and timeout."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=max_retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=[500, 502, 503, 504]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.timeout = timeout
+    return session
 
 private_key = load_private_key_from_file('demo_private_key.pem')
 
@@ -65,6 +82,7 @@ sig = sign_pss_text(private_key, msg_string)
 def get_kevents():
     all_events = []
     series_tickers = ['KXNBAGAME', 'KXMLBGAME', 'KXNHLGAME']
+    session = _create_session_with_retries(max_retries=3, backoff_factor=0.5, timeout=10)
 
     for ticker in series_tickers:
         cursor = None
@@ -85,13 +103,11 @@ def get_kevents():
             if cursor:
                 params['cursor'] = cursor
             
-            response = requests.get(full_url, headers=headers, params=params)
+            response = session.get(full_url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()  # Raise exception for bad status codes
             data = response.json()
 
             all_events.extend(data['events'])
-
-            # print(response.text)
-            # events = data['events']
 
             cursor = data.get('cursor')
             if not cursor:
