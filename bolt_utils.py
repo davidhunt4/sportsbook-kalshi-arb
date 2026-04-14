@@ -196,6 +196,7 @@ class BoltOddsManager:
     async def listen(self):
         """Listen for websocket messages and update game states."""
         self.running = True
+        last_cleanup = datetime.utcnow()
         
         while self.running:
             try:
@@ -208,6 +209,12 @@ class BoltOddsManager:
 
                 for data in msg:
                     await self._handle_message(data)
+                
+                # Cleanup old games every 5 minutes
+                now = datetime.utcnow()
+                if (now - last_cleanup).total_seconds() > 300:
+                    self._cleanup_old_games()
+                    last_cleanup = now
                     
             except websockets.ConnectionClosed as e:
                 print(f"Connection closed: {e}")
@@ -230,6 +237,38 @@ class BoltOddsManager:
         if self.websocket:
             await self.websocket.close()
             
+    def _cleanup_old_games(self):
+        """Remove games that are from yesterday or earlier."""
+        today = datetime.utcnow().date()
+        games_to_remove = []
+        
+        for game_id, sportsbooks in self.games.items():
+            for sportsbook, state in sportsbooks.items():
+                try:
+                    # Get the game's scheduled date
+                    when_str = state['data']['info']['when']  # e.g., "2026-03-05, 7:00 PM"
+                    game_date = datetime.strptime(when_str, "%Y-%m-%d, %I:%M %p").date()
+                    
+                    # If game was scheduled for yesterday or earlier, remove it
+                    if game_date < today:
+                        games_to_remove.append((game_id, sportsbook))
+                except (KeyError, ValueError) as e:
+                    # If we can't parse the time, skip cleanup for this game
+                    pass
+        
+        # Remove old games
+        removed_count = 0
+        for game_id, sportsbook in games_to_remove:
+            if sportsbook in self.games.get(game_id, {}):
+                del self.games[game_id][sportsbook]
+                removed_count += 1
+            # Clean up empty game entries
+            if game_id in self.games and not self.games[game_id]:
+                del self.games[game_id]
+        
+        if removed_count > 0:
+            print(f"[CLEANUP] Removed {removed_count} games from yesterday or earlier. Games in memory: {len(self.games)}")
+            
     def get_bevents(self) -> List[dict]:
         """
         Get the most recent state for each available NBA game/sportsbook combo.
@@ -251,10 +290,15 @@ class BoltOddsManager:
             }
         """
         bevents = []
+        total_game_ids = len(self.games)
         
         for game_id, sportsbooks in self.games.items():
             for sportsbook, state in sportsbooks.items():
                 bevents.append(state)
+        
+        # Log memory info periodically to catch accumulation issues
+        if total_game_ids > 100:
+            print(f"[MEMORY INFO] {total_game_ids} unique games in cache, {len(bevents)} events returned")
                 
         return bevents
 
