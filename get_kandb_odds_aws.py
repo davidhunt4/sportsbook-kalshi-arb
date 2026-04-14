@@ -230,7 +230,13 @@ async def main():
             # Get current game states anytime
             start = time.time()
             bolt_data = {}
-            bevents = get_bevents()
+            
+            # Fetch Bolt events with error handling
+            try:
+                bevents = get_bevents()
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch Bolt events: {e}")
+                bevents = []
             et = pytz.timezone('America/New_York')
             now_et = datetime.now(et).replace(tzinfo=None)
             bevents = [event for event in bevents if datetime.strptime(event['data']['info']['when'], "%Y-%m-%d, %I:%M %p") > now_et] # filtering for pregame only
@@ -264,7 +270,13 @@ async def main():
                 print(f'{key[2]}, {key[3]}: {key[0]} ({avg_info["home_prob"]:.4f}) vs {key[1]} ({avg_info["away_prob"]:.4f}) on average')
             bolt_data.update(bolt_averages)
             
-            kevents = get_kevents()
+            # Fetch Kalshi events with error handling and retry
+            try:
+                kevents = get_kevents()
+            except Exception as e:
+                print(f"[ERROR] Failed to fetch Kalshi events (attempt failed): {e}")
+                kevents = []
+            
             kalshi_data = {}
             print()
             print("===================== KALSHI EVENTS ===========================")
