@@ -160,6 +160,7 @@ async def main():
     kalshi_ticker_to_game = {} # market_ticker -> (game_key, 'home'|'away')
 
     positions = set()          # set of tickers we currently hold
+    started_game_keys = set()  # game keys evicted because game has started (blacklist)
 
     # ── Single-game arb check ─────────────────────────────────────────────────
     def check_game(game_key):
@@ -206,14 +207,6 @@ async def main():
     # ── Bolt callbacks ────────────────────────────────────────────────────────
     async def on_bolt_update(game_id, sportsbook, game_data):
         """Fired by BoltOddsManager for initial_state, game_update, and line_update."""
-        # Only consider pre-game markets
-        try:
-            game_time = datetime.strptime(game_data['info']['when'], "%Y-%m-%d, %I:%M %p")
-        except (KeyError, ValueError):
-            return
-        if game_time <= datetime.now(et).replace(tzinfo=None):
-            return
-
         home_team_raw = game_data.get('home_team')
         away_team_raw = game_data.get('away_team')
         if not home_team_raw or not away_team_raw:
@@ -226,6 +219,27 @@ async def main():
             return
 
         try:
+            when_str = game_data['info']['when']
+            game_time = datetime.strptime(when_str, "%Y-%m-%d, %I:%M %p")
+        except (KeyError, ValueError):
+            return
+
+        date = when_str.split(',')[0]
+        league = game_data.get('sport', '')
+        game_key = (home_team, away_team, date, league)
+
+        # Fast exit if already blacklisted
+        if game_key in started_game_keys:
+            return
+
+        # Game has started — evict from caches and blacklist
+        if game_time <= datetime.now(et).replace(tzinfo=None):
+            bolt_per_sportsbook.pop(game_key, None)
+            bolt_averages.pop(game_key, None)
+            started_game_keys.add(game_key)
+            return
+
+        try:
             home_line = game_data['outcomes'][f'{home_team_raw} Moneyline']['odds']
             away_line = game_data['outcomes'][f'{away_team_raw} Moneyline']['odds']
         except KeyError:
@@ -233,9 +247,6 @@ async def main():
         if home_line is None or away_line is None or home_line == '' or away_line == '':
             return
 
-        date = game_data['info']['when'].split(',')[0]
-        league = game_data.get('sport', '')
-        game_key = (home_team, away_team, date, league)
         bolt_id_to_key[game_id] = game_key
 
         home_prob, away_prob = get_implied_prob(home_line, away_line)
@@ -280,6 +291,20 @@ async def main():
                     'away_prob': avg_away,
                     'sportsbook': 'average',
                 }
+
+    # ── Started-games cleanup ─────────────────────────────────────────────────
+    async def cleanup_started_games():
+        """Hourly sweep to remove old entries from the started_game_keys blacklist.
+        Keeps anything within 2 days of today to handle games that play past midnight.
+        """
+        while True:
+            await asyncio.sleep(3600)
+            today = datetime.now(et).date()
+            stale = {k for k in started_game_keys
+                     if (today - datetime.strptime(k[2], "%Y-%m-%d").date()).days > 2}
+            started_game_keys -= stale
+            if stale:
+                print(f"[CLEANUP] Removed {len(stale)} stale started-game keys")
 
     # ── Kalshi callback ───────────────────────────────────────────────────────
     async def on_kalshi_update(ticker_msg):
@@ -376,6 +401,7 @@ async def main():
 
     all_tickers = list(kalshi_ticker_to_game.keys())
     await start_kalshi_stream(all_tickers, on_update=on_kalshi_update)
+    asyncio.create_task(cleanup_started_games())
 
     # Keep running until interrupted; streams live as background tasks
     try:
