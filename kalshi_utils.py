@@ -5,6 +5,10 @@ import websockets
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 from typing import Callable, List, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 def load_private_key_from_file(file_path):
     with open(file_path, "rb") as key_file:
@@ -68,7 +72,7 @@ def _create_session_with_retries(max_retries=3, backoff_factor=0.5, timeout=10):
     session.timeout = timeout
     return session
 
-private_key = load_private_key_from_file('demo_private_key.pem')
+private_key = load_private_key_from_file('prod_private_key.pem')
 
 method = "GET"
 # base_url = "https://demo-api.kalshi.co"
