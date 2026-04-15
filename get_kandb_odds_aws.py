@@ -1,5 +1,6 @@
 from bolt_utils import start_bolt_stream, stop_bolt_stream
 from kalshi_utils import get_kevents, start_kalshi_stream, stop_kalshi_stream
+import argparse
 import asyncio
 from dotenv import load_dotenv
 import os
@@ -141,7 +142,7 @@ def compute_fees(odds, contracts):
     return 0.07 * odds * (1 - odds) * contracts
 
 
-async def main():
+async def main(pregame_only: bool = True):
     if not os.getenv('BOLT_API_KEY'):
         raise RuntimeError('Missing BOLT_API_KEY. Set it in environment or .env on EC2.')
     if not os.getenv('KALSHI_PROD_API_KEY'):
@@ -228,16 +229,17 @@ async def main():
         league = game_data.get('sport', '')
         game_key = (home_team, away_team, date, league)
 
-        # Fast exit if already blacklisted
-        if game_key in started_game_keys:
-            return
+        if pregame_only:
+            # Fast exit if already blacklisted
+            if game_key in started_game_keys:
+                return
 
-        # Game has started — evict from caches and blacklist
-        if game_time <= datetime.now(et).replace(tzinfo=None):
-            bolt_per_sportsbook.pop(game_key, None)
-            bolt_averages.pop(game_key, None)
-            started_game_keys.add(game_key)
-            return
+            # Game has started — evict from caches and blacklist
+            if game_time <= datetime.now(et).replace(tzinfo=None):
+                bolt_per_sportsbook.pop(game_key, None)
+                bolt_averages.pop(game_key, None)
+                started_game_keys.add(game_key)
+                return
 
         try:
             home_line = game_data['outcomes'][f'{home_team_raw} Moneyline']['odds']
@@ -401,7 +403,8 @@ async def main():
 
     all_tickers = list(kalshi_ticker_to_game.keys())
     await start_kalshi_stream(all_tickers, on_update=on_kalshi_update)
-    asyncio.create_task(cleanup_started_games())
+    if pregame_only:
+        asyncio.create_task(cleanup_started_games())
 
     # Keep running until interrupted; streams live as background tasks
     try:
@@ -412,4 +415,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Kalshi/Bolt arbitrage bot")
+    parser.add_argument(
+        '--pregame-only',
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Only consider pre-game markets (default: True). Use --no-pregame-only to include in-game markets."
+    )
+    args = parser.parse_args()
+    asyncio.run(main(pregame_only=args.pregame_only))
