@@ -180,29 +180,40 @@ async def main(pregame_only: bool = True):
         home_diff_sell = bolt_info['home_prob'] - kalshi_info['home_odds_bid']
         away_diff_sell = bolt_info['away_prob'] - kalshi_info['away_odds_bid']
 
+        try:
+            game_time = datetime.strptime(bolt_info['when'], "%Y-%m-%d, %I:%M %p")
+            is_pregame = game_time > datetime.now(et).replace(tzinfo=None)
+        except (KeyError, ValueError):
+            is_pregame = True  # default to pregame if time is unavailable
+
         with open(TRADE_LOG_PATH, 'a') as f:
-            if home_diff_buy > (compute_fees(kalshi_info['home_odds_ask'], 1) + compute_fees(bolt_info['home_prob'], 1)):
+            kalship_home_fees = compute_fees(kalshi_info['home_odds_ask'], 1)
+            boltp_home_fees = compute_fees(bolt_info['home_prob'], 1)
+            kalship_away_fees = compute_fees(kalshi_info['away_odds_ask'], 1)
+            boltp_away_fees = compute_fees(bolt_info['away_prob'], 1)
+
+            if home_diff_buy > (kalship_home_fees + boltp_home_fees): # fees estimated as fees on kalshi ask plus fees on the estimated sell price, which is the bolt implied probability
                 print(f"\n{game_key[2]}: {game_key[0]} vs {game_key[1]} in {game_key[3]}")
                 print(f"  Bolt (average): Home {bolt_info['home_prob']:.4f}")
                 print(f"  Kalshi: Home {kalshi_info['home_odds_ask']:.4f}")
                 if kalshi_info['home_ticker'] not in positions:
-                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_ask']:.4f}, {bolt_info['home_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_ask']:.4f}, {bolt_info['home_prob']:.4f}, average, {kalship_home_fees}, {is_pregame}, {datetime.now().isoformat()}\n")
                     positions.add(kalshi_info['home_ticker'])
 
-            if away_diff_buy > (compute_fees(kalshi_info['away_odds_ask'], 1) + compute_fees(bolt_info['away_prob'], 1)):
+            if away_diff_buy > (kalship_away_fees + boltp_away_fees):
                 print(f"\n{game_key[2]}: {game_key[0]} vs {game_key[1]} in {game_key[3]}")
                 print(f"  Bolt (average): Away {bolt_info['away_prob']:.4f}")
                 print(f"  Kalshi: Away {kalshi_info['away_odds_ask']:.4f}")
                 if kalshi_info['away_ticker'] not in positions:
-                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_ask']:.4f}, {bolt_info['away_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                    f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, BUY, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_ask']:.4f}, {bolt_info['away_prob']:.4f}, average, {kalship_away_fees}, {is_pregame}, {datetime.now().isoformat()}\n")
                     positions.add(kalshi_info['away_ticker'])
 
             if home_diff_sell < 0.005 and kalshi_info['home_ticker'] in positions:
-                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_bid']:.4f}, {bolt_info['home_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['home_ticker']}, {kalshi_info['home_odds_bid']:.4f}, {bolt_info['home_prob']:.4f}, average, {kalship_home_fees}, {is_pregame}, {datetime.now().isoformat()}\n")
                 positions.discard(kalshi_info['home_ticker'])
 
             if away_diff_sell < 0.005 and kalshi_info['away_ticker'] in positions:
-                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_bid']:.4f}, {bolt_info['away_prob']:.4f}, average, {datetime.now().isoformat()}\n")
+                f.write(f"{game_key[2]}, {game_key[3]}, {game_key[0]}, {game_key[1]}, SELL, {kalshi_info['away_ticker']}, {kalshi_info['away_odds_bid']:.4f}, {bolt_info['away_prob']:.4f}, average, {kalship_away_fees}, {is_pregame}, {datetime.now().isoformat()}\n")
                 positions.discard(kalshi_info['away_ticker'])
 
     # ── Bolt callbacks ────────────────────────────────────────────────────────
@@ -268,6 +279,7 @@ async def main(pregame_only: bool = True):
             'home_prob': avg_home,
             'away_prob': avg_away,
             'sportsbook': 'average',
+            'when': when_str,
         }
 
         check_game(game_key)
