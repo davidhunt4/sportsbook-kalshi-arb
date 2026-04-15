@@ -75,7 +75,7 @@ class BoltOddsManager:
     #     if action == 'initial_state' or action == 'game_update':
     #         # Store/update full game state for this sportsbook
     #         self.games[game_id][sportsbook] = {
-    #             'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
+    #             'timestamp': data.get('timestamp', datetime.now(_ET).isoformat()),
     #             'action': action,
     #             'data': game_data
     #         }
@@ -106,7 +106,7 @@ class BoltOddsManager:
     #                     'outcome_target': outcome_target
     #                 }
                     
-    #             existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+    #             existing_state['timestamp'] = data.get('timestamp', datetime.now(_ET).isoformat())
     #             existing_state['action'] = 'line_update'
                 
     #     elif action == 'game_removed':
@@ -155,7 +155,7 @@ class BoltOddsManager:
         if action in ('initial_state', 'game_update'):
             # Full state replacement — both send complete outcomes dict
             self.games[game_id][sportsbook] = {
-                'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
+                'timestamp': data.get('timestamp', datetime.now(_ET).isoformat()),
                 'action': action,
                 'data': game_data
             }
@@ -182,7 +182,7 @@ class BoltOddsManager:
                 # game_data['outcomes'] has ONE key: "Team Moneyline"
                 existing_state['data']['outcomes'].update(outcome_target)
 
-            existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+            existing_state['timestamp'] = data.get('timestamp', datetime.now(_ET).isoformat())
             existing_state['action'] = 'line_update'
             if self.on_update:
                 try:
