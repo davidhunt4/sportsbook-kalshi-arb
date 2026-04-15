@@ -4,6 +4,9 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
+import pytz
+
+_ET = pytz.timezone('America/New_York')
 
 class BoltOddsManager:
     """
@@ -225,22 +228,22 @@ class BoltOddsManager:
     async def listen(self):
         """Listen for websocket messages and update game states."""
         self.running = True
-        last_cleanup = datetime.utcnow()
-        
+        last_cleanup = datetime.now(_ET)
+
         while self.running:
             try:
                 message = await self.websocket.recv()
                 msg = json.loads(message)
-                
+
                 # for data in msg:
                 #     action = data.get('action')
                 #     print(f"[WEBSOCKET] {action}: {data.get('data', {}).get('sportsbook', 'N/A')} - {data.get('data', {}).get('game', 'N/A')}")
 
                 for data in msg:
                     await self._handle_message(data)
-                
+
                 # Cleanup old games every 5 minutes
-                now = datetime.utcnow()
+                now = datetime.now(_ET)
                 if (now - last_cleanup).total_seconds() > 300:
                     self._cleanup_old_games()
                     last_cleanup = now
@@ -268,7 +271,7 @@ class BoltOddsManager:
             
     def _cleanup_old_games(self):
         """Remove games that are from yesterday or earlier."""
-        today = datetime.utcnow().date()
+        today = datetime.now(_ET).date()
         games_to_remove = []
         
         for game_id, sportsbooks in self.games.items():
