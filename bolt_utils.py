@@ -4,26 +4,33 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Optional
+import pytz
+
+_ET = pytz.timezone('America/New_York')
 
 class BoltOddsManager:
     """
     Manages Bolt websocket connection and tracks current state of NBA games across sportsbooks.
     """
     
-    def __init__(self, api_key: str, sportsbooks: List[str]):
+    def __init__(self, api_key: str, sportsbooks: List[str], on_update=None, on_remove=None):
         """
         Initialize Bolt odds manager.
-        
+
         Args:
             api_key: Bolt API key
             sportsbooks: List of sportsbook names to subscribe to
+            on_update: async callback(game_id, sportsbook, game_data) fired on any state change
+            on_remove: async callback(game_id, sportsbook) fired when a game is removed
         """
         self.api_key = api_key
         self.sportsbooks = sportsbooks
         self.uri = f"wss://spro.agency/api?key={api_key}"
         self.websocket = None
         self.running = False
-        
+        self.on_update = on_update
+        self.on_remove = on_remove
+
         # Track game states: games[game_id][sportsbook] = full_game_state
         self.games: Dict[str, Dict[str, dict]] = {}
         
@@ -68,7 +75,7 @@ class BoltOddsManager:
     #     if action == 'initial_state' or action == 'game_update':
     #         # Store/update full game state for this sportsbook
     #         self.games[game_id][sportsbook] = {
-    #             'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
+    #             'timestamp': data.get('timestamp', datetime.now(_ET).isoformat()),
     #             'action': action,
     #             'data': game_data
     #         }
@@ -99,7 +106,7 @@ class BoltOddsManager:
     #                     'outcome_target': outcome_target
     #                 }
                     
-    #             existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+    #             existing_state['timestamp'] = data.get('timestamp', datetime.now(_ET).isoformat())
     #             existing_state['action'] = 'line_update'
                 
     #     elif action == 'game_removed':
@@ -148,47 +155,72 @@ class BoltOddsManager:
         if action in ('initial_state', 'game_update'):
             # Full state replacement — both send complete outcomes dict
             self.games[game_id][sportsbook] = {
-                'timestamp': data.get('timestamp', datetime.utcnow().isoformat() + '+00:00'),
+                'timestamp': data.get('timestamp', datetime.now(_ET).isoformat()),
                 'action': action,
                 'data': game_data
             }
-            
+            if self.on_update:
+                try:
+                    await self.on_update(game_id, sportsbook, game_data)
+                except Exception as e:
+                    print(f"[ERROR] on_update callback failed: {e}")
+
         elif action == 'line_update':
             # Partial update — only one outcome included
             # If game/sportsbook doesn't exist yet, skip (wait for initial_state first)
             if sportsbook not in self.games[game_id]:
                 return
-                
+
             existing_state = self.games[game_id][sportsbook]
-            
+
             # Merge the single outcome into existing outcomes
             if 'outcomes' not in existing_state['data']:
                 existing_state['data']['outcomes'] = {}
-                
+
             outcome_target = game_data.get('outcomes', {})
             if outcome_target:
                 # game_data['outcomes'] has ONE key: "Team Moneyline"
                 existing_state['data']['outcomes'].update(outcome_target)
-                
-            existing_state['timestamp'] = data.get('timestamp', datetime.utcnow().isoformat() + '+00:00')
+
+            existing_state['timestamp'] = data.get('timestamp', datetime.now(_ET).isoformat())
             existing_state['action'] = 'line_update'
-            
+            if self.on_update:
+                try:
+                    await self.on_update(game_id, sportsbook, existing_state['data'])
+                except Exception as e:
+                    print(f"[ERROR] on_update callback failed: {e}")
+
         elif action == 'game_removed':
             if sportsbook in self.games.get(game_id, {}):
+                if self.on_remove:
+                    try:
+                        await self.on_remove(game_id, sportsbook)
+                    except Exception as e:
+                        print(f"[ERROR] on_remove callback failed: {e}")
                 del self.games[game_id][sportsbook]
             if game_id in self.games and not self.games[game_id]:
                 del self.games[game_id]
-                
+
         elif action == 'sport_clear':
             for gid in list(self.games.keys()):
                 if sportsbook in self.games[gid]:
+                    if self.on_remove:
+                        try:
+                            await self.on_remove(gid, sportsbook)
+                        except Exception as e:
+                            print(f"[ERROR] on_remove callback failed: {e}")
                     del self.games[gid][sportsbook]
                 if not self.games[gid]:
                     del self.games[gid]
-                    
+
         elif action == 'book_clear':
             for gid in list(self.games.keys()):
                 if sportsbook in self.games[gid]:
+                    if self.on_remove:
+                        try:
+                            await self.on_remove(gid, sportsbook)
+                        except Exception as e:
+                            print(f"[ERROR] on_remove callback failed: {e}")
                     del self.games[gid][sportsbook]
                 if not self.games[gid]:
                     del self.games[gid]
@@ -196,22 +228,22 @@ class BoltOddsManager:
     async def listen(self):
         """Listen for websocket messages and update game states."""
         self.running = True
-        last_cleanup = datetime.utcnow()
-        
+        last_cleanup = datetime.now(_ET)
+
         while self.running:
             try:
                 message = await self.websocket.recv()
                 msg = json.loads(message)
-                
+
                 # for data in msg:
                 #     action = data.get('action')
                 #     print(f"[WEBSOCKET] {action}: {data.get('data', {}).get('sportsbook', 'N/A')} - {data.get('data', {}).get('game', 'N/A')}")
 
                 for data in msg:
                     await self._handle_message(data)
-                
+
                 # Cleanup old games every 5 minutes
-                now = datetime.utcnow()
+                now = datetime.now(_ET)
                 if (now - last_cleanup).total_seconds() > 300:
                     self._cleanup_old_games()
                     last_cleanup = now
@@ -239,7 +271,7 @@ class BoltOddsManager:
             
     def _cleanup_old_games(self):
         """Remove games that are from yesterday or earlier."""
-        today = datetime.utcnow().date()
+        today = datetime.now(_ET).date()
         games_to_remove = []
         
         for game_id, sportsbooks in self.games.items():
@@ -307,7 +339,7 @@ class BoltOddsManager:
 _bolt_manager: Optional[BoltOddsManager] = None
 
 
-async def start_bolt_stream(api_key: Optional[str] = None, sportsbooks: Optional[List[str]] = None):
+async def start_bolt_stream(api_key: Optional[str] = None, sportsbooks: Optional[List[str]] = None, on_update=None, on_remove=None):
     """
     Start the Bolt odds stream in the background.
     
@@ -327,7 +359,7 @@ async def start_bolt_stream(api_key: Optional[str] = None, sportsbooks: Optional
             "espnbet", "thescore", "betrivers", "hardrock", "ballybet"
         ]
         
-    _bolt_manager = BoltOddsManager(api_key, sportsbooks)
+    _bolt_manager = BoltOddsManager(api_key, sportsbooks, on_update=on_update, on_remove=on_remove)
     
     # Start listening in background
     asyncio.create_task(_bolt_manager.start())
