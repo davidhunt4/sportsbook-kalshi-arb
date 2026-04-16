@@ -139,7 +139,7 @@ bteam_to_klocation = {
 
 def compute_fees(odds, contracts):
     """Compute fees based on odds. Placeholder for now."""
-    return 0.07 * odds * (1 - odds) * contracts
+    return round(0.07 * odds * (1 - odds) * contracts, 2)
 
 
 async def main(pregame_only: bool = True):
